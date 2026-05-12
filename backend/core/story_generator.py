@@ -11,6 +11,7 @@ from models.story import Story, StoryNode
 from core.models import StoryLLMResponse, StoryNodeLLM
 from dotenv import load_dotenv
 import os  # Added for environment variable access
+import time  # Added for retry delays
 
 load_dotenv()
 
@@ -40,11 +41,26 @@ class StoryGenerator:
             )
         ]).partial(format_instructions=story_parser.get_format_instructions())
 
-        raw_response = llm.invoke(prompt.invoke({}))
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                raw_response = llm.invoke(prompt.invoke({}))
+                if raw_response is None:
+                    if attempt < max_retries - 1:
+                        print(f"Attempt {attempt + 1} failed (None response), retrying...")
+                        time.sleep(2)  # Wait 2 seconds before retry
+                        continue
+                    else:
+                        raise ValueError("LLM returned None after all retries - check model or API limits")
+                response_text = raw_response.content if hasattr(raw_response, 'content') else str(raw_response)
+                break  # Success, exit loop
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    print(f"Attempt {attempt + 1} failed with error: {e}, retrying...")
+                    time.sleep(2)
+                else:
+                    raise
 
-        response_text = raw_response
-        if hasattr(raw_response, 'content'):
-            response_text = raw_response.content
         story_structure = story_parser.parse(response_text)
 
         story_db = Story(title=story_structure.title, session_id=session_id)
